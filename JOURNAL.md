@@ -1,41 +1,48 @@
 # Orphan - Development Journal
 
-## Day 1: Project Setup & Foundation
+## March 3 - Getting started
 
-### What I built
-- **Rust backend** with Axum web framework (edition 2024)
-  - Bitcoin Core RPC client (`rpc.rs`) - full JSON-RPC integration
-  - Chain state tracker (`chain.rs`) - block tree with fork detection
-  - WebSocket handler (`ws.rs`) - real-time block event broadcasting
-  - REST API (`api.rs`) - chain tips, block tree, block details, mining endpoints
-  - Fork creation via `invalidateblock`/`reconsiderblock` pattern
+Picked the visual chain/reorg project from 0xB10C's ideas. Set up the repo, wrote the README with the planned architecture. Going with Rust (Axum) for the backend and Next.js for the frontend.
 
-- **Next.js frontend** with Tailwind CSS
-  - SVG-based chain visualization (custom, not React Flow)
-  - Interactive block nodes with click-to-select and click-to-mine
-  - Block details sidebar panel
-  - WebSocket connection for real-time updates
-  - Educational "How it works" overlay
-  - Dark theme with Bitcoin orange accent
+Main question right now: how to actually create forks in regtest? Need to dig into Bitcoin Core's RPC docs.
 
-- **Docker Compose** for one-command local setup
-  - Bitcoin Core (regtest) container
-  - Rust backend container
+## March 4 - Backend scaffold
 
-### Architecture decisions
-- **SVG over React Flow**: More control, lighter weight, unique approach vs competitors
-- **Axum over Actix**: Modern, tower-based, great WebSocket support
-- **Polling pattern**: 1-second poll of Bitcoin Core rather than ZMQ (simpler, good enough for regtest)
-- **Fork creation**: Using `invalidateblock`/`reconsiderblock` RPC calls to create real forks in Bitcoin Core's block tree
+Got the basic Axum server running with health check endpoint. Set up Cargo project with the dependencies I think I'll need: axum, tokio, serde, reqwest for RPC calls.
 
-### Key API endpoints
-```
-GET  /api/health          - Health check
-GET  /api/chain/info      - Blockchain info
-GET  /api/chain/tips      - All chain tips
-GET  /api/chain/blocks    - Full block tree
-GET  /api/block/:hash     - Block details
-POST /api/mine            - Mine on best chain
-POST /api/mine/:hash      - Mine extending specific block (creates forks!)
-WS   /ws                  - Real-time block events
-```
+Still figuring out the best way to structure the RPC client. Bitcoin Core uses JSON-RPC 2.0 with basic auth.
+
+## March 5 - RPC client and chain tracking
+
+Built the RPC client module. Can now call `getblockchaininfo`, `getblock`, `getchaintips`, `generatetoaddress`. Also started on the chain state tracker that builds a block tree in memory by walking back from chain tips.
+
+Learned that `getchaintips` returns all tips including stale ones — that's exactly what I need for showing forks.
+
+## March 6 - API and WebSocket
+
+Added REST endpoints for getting chain tips, block tree, block details. Also the mining endpoints.
+
+For creating forks, my plan is: `invalidateblock` on the current chain to make the target block the tip, mine there, then `reconsiderblock`. Need to test if this actually works.
+
+Set up WebSocket handler with tokio broadcast channel. The idea is the backend polls Bitcoin Core every second and pushes events to connected clients.
+
+## March 7 - Docker setup
+
+Created docker-compose.yml with Bitcoin Core (regtest) and the Rust backend. Wrote a multi-stage Dockerfile for the backend build.
+
+Haven't tested the full Docker flow yet — need to make sure the containers can talk to each other.
+
+## March 8-9 - Frontend
+
+Initialized Next.js project. Built the SVG-based chain visualization — each block is a node, connected by lines to its parent. Green for active chain, red for stale blocks.
+
+The layout algorithm uses DFS from genesis, assigning x position by height and y position by branch. It's basic but works for the block counts we'll have on regtest.
+
+Also added a block details panel, mining controls, and a small explainer overlay.
+
+## What's next
+
+- Actually test the full flow end to end with Docker
+- See if the fork creation via invalidateblock/reconsiderblock works
+- Fix any issues that come up when connecting frontend to backend
+- Make the WebSocket updates reliable

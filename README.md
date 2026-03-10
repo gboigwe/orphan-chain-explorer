@@ -4,14 +4,16 @@ An interactive visual tool for exploring Bitcoin chain forks and reorganizations
 
 Built for the [BOSS Challenge 2026](https://bosschallenge.xyz/) based on [0xB10C's project idea #2](https://github.com/0xB10C/project-ideas/issues/2): "Visual chain, reorg, and fork creator for Regtest and Signet."
 
-## Features
+## Features (planned / in progress)
 
 - **Visual Block Tree** - SVG-based chain visualization showing active chain and stale blocks
-- **Interactive Mining** - Click to mine blocks on any chain tip, creating forks in real-time
-- **Real-time Updates** - WebSocket connection pushes new blocks instantly to the UI
-- **Fork Creation** - Mine on competing chains to trigger Bitcoin Core reorganizations
-- **Block Inspector** - Click any block to see full details (hash, height, txs, merkle root, etc.)
-- **Educational Mode** - Built-in explanations of how forks and reorgs work
+- **Interactive Mining** - Mine blocks on any chain tip to create forks
+- **Real-time Updates** - WebSocket connection for live chain state
+- **Fork Creation** - Trigger Bitcoin Core reorganizations by mining competing chains
+- **Block Inspector** - View block details (hash, height, txs, merkle root, etc.)
+- **Educational Mode** - Explanations of how forks and reorgs work
+
+> **Note:** This project is a work in progress. The core backend and frontend are built but not yet fully tested end to end.
 
 ## Quick Start
 
