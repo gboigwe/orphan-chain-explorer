@@ -62,6 +62,7 @@ impl ChainState {
 /// Poll Bitcoin Core every second to detect new blocks and chain state changes
 pub async fn poll_chain(state: Arc<AppState>) {
     let mut last_best = String::new();
+    let mut last_tip_count: usize = 0;
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
 
     loop {
@@ -75,12 +76,20 @@ pub async fn poll_chain(state: Arc<AppState>) {
             }
         };
 
-        if best_hash == last_best {
+        let tip_count = state
+            .rpc
+            .get_chain_tips()
+            .await
+            .map(|t| t.len())
+            .unwrap_or(0);
+
+        if best_hash == last_best && tip_count == last_tip_count {
             continue;
         }
 
-        tracing::info!("New best block: {best_hash}");
+        tracing::info!("Chain update: best={} tips={}", &best_hash[..16], tip_count);
         last_best = best_hash.clone();
+        last_tip_count = tip_count;
 
         // Sync the full chain from tips
         if let Err(e) = sync_chain(&state).await {
@@ -95,20 +104,20 @@ pub async fn poll_chain(state: Arc<AppState>) {
     }
 }
 
-/// Walk back from all chain tips and populate the block tree
+/// Walk back from all chain tips and rebuild the block tree
 async fn sync_chain(state: &Arc<AppState>) -> Result<(), String> {
     let tips = state.rpc.get_chain_tips().await?;
-    let mut chain = state.chain.lock().await;
-
     let best_hash = state.rpc.get_best_block_hash().await?;
-    chain.best_hash = Some(best_hash);
+
+    // Rebuild the entire block map from all tips
+    let mut new_blocks = HashMap::new();
 
     for tip in &tips {
         let mut hash = tip.hash.clone();
 
-        // Walk backwards from this tip until we reach a block we already know
         loop {
-            if chain.blocks.contains_key(&hash) {
+            // Skip if already fetched in this sync pass
+            if new_blocks.contains_key(&hash) {
                 break;
             }
 
@@ -122,7 +131,7 @@ async fn sync_chain(state: &Arc<AppState>) -> Result<(), String> {
 
             let node = BlockNode::from(&block);
             let prev = node.prev_hash.clone();
-            chain.add_block(node);
+            new_blocks.insert(hash, node);
 
             match prev {
                 Some(p) => hash = p,
@@ -131,27 +140,27 @@ async fn sync_chain(state: &Arc<AppState>) -> Result<(), String> {
         }
     }
 
-    // Update is_active status for all blocks based on current best chain
-    let best = chain.best_hash.clone();
-    if let Some(best) = best {
-        // First mark all as inactive
-        for block in chain.blocks.values_mut() {
-            block.is_active = false;
-        }
-        // Walk from best tip back to genesis marking active
-        let mut h = best;
-        loop {
-            if let Some(block) = chain.blocks.get_mut(&h) {
-                block.is_active = true;
-                match block.prev_hash.clone() {
-                    Some(prev) => h = prev,
-                    None => break,
-                }
-            } else {
-                break;
+    // Mark active chain by walking from best tip
+    for block in new_blocks.values_mut() {
+        block.is_active = false;
+    }
+    let mut h = best_hash.clone();
+    loop {
+        if let Some(block) = new_blocks.get_mut(&h) {
+            block.is_active = true;
+            match block.prev_hash.clone() {
+                Some(prev) => h = prev,
+                None => break,
             }
+        } else {
+            break;
         }
     }
+
+    // Swap in the new state
+    let mut chain = state.chain.lock().await;
+    chain.blocks = new_blocks;
+    chain.best_hash = Some(best_hash);
 
     Ok(())
 }

@@ -23,6 +23,21 @@ async fn main() {
     let rpc_pass = std::env::var("BITCOIN_RPC_PASS").unwrap_or_else(|_| "bitcoin".into());
 
     let rpc = rpc::BitcoinRpc::new(&rpc_url, &rpc_user, &rpc_pass);
+
+    // Wait for Bitcoin Core to be ready and ensure a wallet exists
+    loop {
+        match rpc.ensure_wallet().await {
+            Ok(_) => {
+                tracing::info!("Wallet ready");
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("Waiting for Bitcoin Core: {e}");
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            }
+        }
+    }
+
     let chain_state = chain::ChainState::new();
     let (tx, _rx) = broadcast::channel::<ws::BlockEvent>(100);
 

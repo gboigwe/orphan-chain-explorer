@@ -108,9 +108,9 @@ async fn mine_block(
 
 /// Mine a block extending a specific block (for creating forks).
 ///
-/// Strategy: We get the current best tip's raw block hex, invalidate blocks
-/// above the target to make it the tip, mine there, then reconsider the
-/// invalidated blocks. This creates a real fork in Bitcoin Core's block tree.
+/// Strategy: Invalidate all active chain blocks from the target's height
+/// upward, making the target block (or its ancestor) the tip. Then mine
+/// one block. Finally reconsider invalidated blocks so both chains coexist.
 async fn mine_on_block(
     State(state): State<Arc<AppState>>,
     Path(parent_hash): Path<String>,
@@ -120,47 +120,50 @@ async fn mine_on_block(
     // Get info about the target block
     let target_block = state.rpc.get_block(&parent_hash).await.map_err(err)?;
     let target_height = target_block.height;
+    let is_active = target_block.confirmations >= 0;
 
     // Get the current best tip
     let best_hash = state.rpc.get_best_block_hash().await.map_err(err)?;
-    let best_block = state.rpc.get_block(&best_hash).await.map_err(err)?;
 
     // If target is already the tip, just mine normally
     if parent_hash == best_hash {
         return mine_block(State(state)).await;
     }
 
-    // Collect blocks to invalidate: walk from best tip down to target_height + 1
-    // We need to invalidate the block at target_height + 1 on the active chain
-    // to make our target the effective tip
-    let mut blocks_to_invalidate = Vec::new();
+    // Find the active chain block to invalidate.
+    // For active blocks: invalidate the child (target_height + 1) so target becomes tip.
+    // For stale blocks: invalidate the active block at target's height so Bitcoin Core
+    //   falls back to the target's parent, then the target becomes the best fork.
+    let invalidate_height = if is_active {
+        target_height + 1
+    } else {
+        target_height
+    };
 
-    // Find the block at target_height + 1 on the current best chain
-    if best_block.height > target_height {
-        // Walk back from best tip to find the block right above our target height
-        let mut h = best_hash.clone();
-        loop {
-            let b = state.rpc.get_block(&h).await.map_err(err)?;
-            if b.height == target_height + 1 {
-                blocks_to_invalidate.push(h);
-                break;
-            }
-            if b.height <= target_height {
-                break;
-            }
-            match b.previousblockhash {
-                Some(prev) => h = prev,
-                None => break,
-            }
+    // Walk back from best tip to find the block at invalidate_height
+    let mut blocks_to_invalidate = Vec::new();
+    let mut h = best_hash.clone();
+    loop {
+        let b = state.rpc.get_block(&h).await.map_err(err)?;
+        if b.height == invalidate_height {
+            blocks_to_invalidate.push(h);
+            break;
+        }
+        if b.height < invalidate_height {
+            break;
+        }
+        match b.previousblockhash {
+            Some(prev) => h = prev,
+            None => break,
         }
     }
 
-    // Invalidate blocks to make the target the tip
+    // Invalidate to make the target (or its chain) the tip
     for hash in &blocks_to_invalidate {
         state.rpc.invalidate_block(hash).await.map_err(err)?;
     }
 
-    // Now mine on the target (which should be the current tip)
+    // Now mine one block — Bitcoin Core will extend the current best tip
     let address = state.rpc.get_new_address().await.map_err(err)?;
     let mined = state
         .rpc
@@ -173,7 +176,7 @@ async fn mine_on_block(
         state.rpc.reconsider_block(hash).await.map_err(err)?;
     }
 
-    // Broadcast chain update since we may have created a fork
+    // Broadcast chain update
     let _ = state.tx.send(ws::BlockEvent::ChainUpdate);
 
     Ok(Json(json!({

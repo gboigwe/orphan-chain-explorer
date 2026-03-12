@@ -101,7 +101,7 @@ impl BitcoinRpc {
             return Err(format!("RPC error: {err}"));
         }
 
-        rpc_resp.result.ok_or_else(|| "No result in RPC response".into())
+        Ok(rpc_resp.result.unwrap_or(Value::Null))
     }
 
     pub async fn get_blockchain_info(&self) -> Result<BlockchainInfo, String> {
@@ -152,6 +152,22 @@ impl BitcoinRpc {
         val.as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| "Expected string".into())
+    }
+
+    /// Ensure a wallet exists, create one if not
+    pub async fn ensure_wallet(&self) -> Result<(), String> {
+        let wallets = self.call("listwallets", json!([])).await?;
+        if let Some(arr) = wallets.as_array() {
+            if !arr.is_empty() {
+                return Ok(());
+            }
+        }
+        // Try to create a default wallet
+        match self.call("createwallet", json!(["default"])).await {
+            Ok(_) => Ok(()),
+            Err(e) if e.contains("already exists") => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     /// Invalidate a block (marks it and descendants as invalid)
